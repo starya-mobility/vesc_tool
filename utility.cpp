@@ -29,10 +29,14 @@
 #include <QMessageBox>
 #include <QFile>
 #include <QFileInfo>
+#include <QtGlobal>
+#include <QNetworkInterface>
+#include <QDirIterator>
 
 #ifdef Q_OS_ANDROID
 #include <QtAndroid>
 #include <QAndroidJniObject>
+#include <QAndroidJniEnvironment>
 #endif
 
 Utility::Utility(QObject *parent) : QObject(parent)
@@ -214,19 +218,51 @@ QString Utility::uuid2Str(QByteArray uuid, bool space)
 bool Utility::requestFilePermission()
 {
 #ifdef Q_OS_ANDROID
-    // Note: The following should work on Qt 5.10
+#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
     // https://codereview.qt-project.org/#/c/199162/
-//    QtAndroid::PermissionResult r = QtAndroid::checkPermission("android.permission.WRITE_EXTERNAL_STORAGE");
-//    if(r == QtAndroid::PermissionResult::Denied) {
-//        QtAndroid::requestPermissionsSync( QStringList() << "android.permission.WRITE_EXTERNAL_STORAGE" );
-//        r = QtAndroid::checkPermission("android.permission.WRITE_EXTERNAL_STORAGE");
-//        if(r == QtAndroid::PermissionResult::Denied) {
-//            return false;
-//        }
-//    }
+    QtAndroid::PermissionResult r = QtAndroid::checkPermission("android.permission.WRITE_EXTERNAL_STORAGE");
+    if(r == QtAndroid::PermissionResult::Denied) {
+        QtAndroid::requestPermissionsSync( QStringList() << "android.permission.WRITE_EXTERNAL_STORAGE", 5000);
+        r = QtAndroid::checkPermission("android.permission.WRITE_EXTERNAL_STORAGE");
+        if(r == QtAndroid::PermissionResult::Denied) {
+            return false;
+        }
+    }
+
     return true;
 #else
     return true;
+#endif
+#else
+    return true;
+#endif
+}
+
+void Utility::keepScreenOn(bool on)
+{
+#ifdef Q_OS_ANDROID
+    QtAndroid::runOnAndroidThread([on]{
+        QAndroidJniObject activity = QtAndroid::androidActivity();
+        if (activity.isValid()) {
+            QAndroidJniObject window =
+                    activity.callObjectMethod("getWindow", "()Landroid/view/Window;");
+
+            if (window.isValid()) {
+                const int FLAG_KEEP_SCREEN_ON = 128;
+                if (on) {
+                    window.callMethod<void>("addFlags", "(I)V", FLAG_KEEP_SCREEN_ON);
+                } else {
+                    window.callMethod<void>("clearFlags", "(I)V", FLAG_KEEP_SCREEN_ON);
+                }
+            }
+        }
+        QAndroidJniEnvironment env;
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+    });
+#else
+    (void)on;
 #endif
 }
 
@@ -244,6 +280,17 @@ bool Utility::waitSignal(QObject *sender, QString signal, int timeoutMs)
     QObject::disconnect(conn2);
 
     return timeoutTimer.isActive();
+}
+
+void Utility::sleepWithEventLoop(int timeMs)
+{
+    QEventLoop loop;
+    QTimer timeoutTimer;
+    timeoutTimer.setSingleShot(true);
+    timeoutTimer.start(timeMs);
+    auto conn1 = QObject::connect(&timeoutTimer, SIGNAL(timeout()), &loop, SLOT(quit()));
+    loop.exec();
+    QObject::disconnect(conn1);
 }
 
 QString Utility::detectAllFoc(VescInterface *vesc,
@@ -402,11 +449,16 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
                                 "All VESCs must have the latest firmware to perform this operation.",
                                 false, false);
         res = false;
+        qWarning() << "Incompatible firmware";
     }
 
     if (res) {
         vesc->commands()->getAppConf();
         res = waitSignal(ap, SIGNAL(updated()), 1500);
+
+        if (!res) {
+            qWarning() << "Appconf not received";
+        }
     }
 
     if (res) {
@@ -415,11 +467,19 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
         vesc->commands()->getAppConfDefault();
         res = waitSignal(ap, SIGNAL(updated()), 1500);
 
+        if (!res) {
+            qWarning() << "Default appconf not received";
+        }
+
         if (res) {
             ap->updateParamInt("controller_id", canId);
             ap->updateParamEnum("send_can_status", canStatus);
             vesc->commands()->setAppConf();
-            res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 2000);
+            res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 3000);
+
+            if (!res) {
+                qWarning() << "Appconf set no ack received";
+            }
         }
     }
 
@@ -436,6 +496,7 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
             }
 
             if (!res) {
+                qWarning() << "Incompatible firmware";
                 break;
             }
 
@@ -443,6 +504,7 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
             res = waitSignal(ap, SIGNAL(updated()), 1500);
 
             if (!res) {
+                qWarning() << "Appconf not received";
                 break;
             }
 
@@ -452,15 +514,17 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
             res = waitSignal(ap, SIGNAL(updated()), 1500);
 
             if (!res) {
+                qWarning() << "Default appconf not received";
                 break;
             }
 
             ap->updateParamInt("controller_id", canId);
             ap->updateParamEnum("send_can_status", canStatus);
             vesc->commands()->setAppConf();
-            res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 2000);
+            res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 3000);
 
             if (!res) {
+                qWarning() << "Appconf set no ack received";
                 break;
             }
         }
@@ -469,6 +533,7 @@ bool Utility::resetInputCan(VescInterface *vesc, QVector<int> canIds)
     vesc->commands()->setSendCan(canLastFwd, canLastId);
     vesc->commands()->getAppConf();
     if (!waitSignal(ap, SIGNAL(updated()), 1500)) {
+        qWarning() << "Appconf not received";
         res = false;
     }
 
@@ -501,6 +566,11 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
     if (res) {
         vesc->commands()->getMcconf();
         res = waitSignal(p, SIGNAL(updated()), 1500);
+        if (!res) {
+            vesc->emitMessageDialog("Read Motor Configuration",
+                                    "Could not read motor configuration.",
+                                    false, false);
+        }
     }
 
     if (res) {
@@ -508,6 +578,12 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
         p->updateParamDouble("l_battery_cut_end", cutEnd);
         vesc->commands()->setMcconf(false);
         res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 2000);
+
+        if (!res) {
+            vesc->emitMessageDialog("Write Motor Configuration",
+                                    "Could not write motor configuration.",
+                                    false, false);
+        }
     }
 
     // All VESCs on CAN-bus
@@ -520,9 +596,6 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
                                         "All VESCs must have the latest firmware to perform this operation.",
                                         false, false);
                 res = false;
-            }
-
-            if (!res) {
                 break;
             }
 
@@ -530,6 +603,10 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
             res = waitSignal(p, SIGNAL(updated()), 1500);
 
             if (!res) {
+                vesc->emitMessageDialog("Read Motor Configuration",
+                                        "Could not read motor configuration.",
+                                        false, false);
+
                 break;
             }
 
@@ -539,6 +616,10 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
             res = waitSignal(vesc->commands(), SIGNAL(ackReceived(QString)), 2000);
 
             if (!res) {
+                vesc->emitMessageDialog("Write Motor Configuration",
+                                        "Could not write motor configuration.",
+                                        false, false);
+
                 break;
             }
         }
@@ -548,6 +629,12 @@ bool Utility::setBatteryCutCan(VescInterface *vesc, QVector<int> canIds,
     vesc->commands()->getMcconf();
     if (!waitSignal(p, SIGNAL(updated()), 1500)) {
         res = false;
+
+        if (!res) {
+            vesc->emitMessageDialog("Read Motor Configuration",
+                                    "Could not read motor configuration.",
+                                    false, false);
+        }
     }
 
     vesc->ignoreCanChange(false);
@@ -959,7 +1046,6 @@ bool Utility::createParamParserC(VescInterface *vesc, QString filename)
                         break;
                     }
                     break;
-                    break;
 
                 case CFG_T_DOUBLE:
                     switch (p->vTx) {
@@ -1112,7 +1198,7 @@ bool Utility::createParamParserC(VescInterface *vesc, QString filename)
 
     outSource << "// This file is autogenerated by VESC Tool\n\n";
     outSource << "#include \"buffer.h\"\n";
-    outSource << "#include \"conf_mc_app_default.h\"\n";
+    outSource << "#include \"conf_general.h\"\n";
     outSource << "#include \"" << headerInfo.fileName() << "\"\n\n";
 
     outSource << "int32_t " << prefix << "_serialize_mcconf(uint8_t *buffer, const mc_configuration *conf) {\n";
@@ -1198,7 +1284,297 @@ bool Utility::checkFwCompatibility(VescInterface *vesc)
                vesc, SLOT(fwVersionReceived(int,int,QString,QByteArray,bool)));
 
     vesc->commands()->getFwVersion();
-    waitSignal(vesc->commands(), SIGNAL(fwVersionReceived(int,int,QString,QByteArray,bool)), 1000);
+    waitSignal(vesc->commands(), SIGNAL(fwVersionReceived(int,int,QString,QByteArray,bool)), 1500);
+
+    disconnect(conn);
+
+    connect(vesc->commands(), SIGNAL(fwVersionReceived(int,int,QString,QByteArray,bool)),
+            vesc, SLOT(fwVersionReceived(int,int,QString,QByteArray,bool)));
+
+    return res;
+}
+
+QVariantList Utility::getNetworkAddresses()
+{
+    QVariantList res;
+
+    for(QHostAddress a: QNetworkInterface::allAddresses()) {
+        if(!a.isLoopback()) {
+            if (a.protocol() == QAbstractSocket::IPv4Protocol) {
+                res << a.toString();
+            }
+        }
+    }
+
+    return res;
+}
+
+void Utility::startGnssForegroundService()
+{
+#ifdef Q_OS_ANDROID
+    QAndroidJniObject::callStaticMethod<void>("com/vedder/vesc/Utils",
+                                              "startVForegroundService",
+                                              "(Landroid/content/Context;)V",
+                                              QtAndroid::androidActivity().object());
+#endif
+}
+
+void Utility::stopGnssForegroundService()
+{
+#ifdef Q_OS_ANDROID
+    QAndroidJniObject::callStaticMethod<void>("com/vedder/vesc/Utils",
+                                              "stopVForegroundService",
+                                              "(Landroid/content/Context;)V",
+                                              QtAndroid::androidActivity().object());
+#endif
+}
+
+void Utility::llhToXyz(double lat, double lon, double height, double *x, double *y, double *z)
+{
+    double sinp = sin(lat * M_PI / 180.0);
+    double cosp = cos(lat * M_PI / 180.0);
+    double sinl = sin(lon * M_PI / 180.0);
+    double cosl = cos(lon * M_PI / 180.0);
+    double e2 = FE_WGS84 * (2.0 - FE_WGS84);
+    double v = RE_WGS84 / sqrt(1.0 - e2 * sinp * sinp);
+
+    *x = (v + height) * cosp * cosl;
+    *y = (v + height) * cosp * sinl;
+    *z = (v * (1.0 - e2) + height) * sinp;
+}
+
+void Utility::xyzToLlh(double x, double y, double z, double *lat, double *lon, double *height)
+{
+    double e2 = FE_WGS84 * (2.0 - FE_WGS84);
+    double r2 = x * x + y * y;
+    double za = z;
+    double zk = 0.0;
+    double sinp = 0.0;
+    double v = RE_WGS84;
+
+    while (fabs(za - zk) >= 1E-4) {
+        zk = za;
+        sinp = za / sqrt(r2 + za * za);
+        v = RE_WGS84 / sqrt(1.0 - e2 * sinp * sinp);
+        za = z + v * e2 * sinp;
+    }
+
+    *lat = (r2 > 1E-12 ? atan(za / sqrt(r2)) : (z > 0.0 ? M_PI / 2.0 : -M_PI / 2.0)) * 180.0 / M_PI;
+    *lon = (r2 > 1E-12 ? atan2(y, x) : 0.0) * 180.0 / M_PI;
+    *height = sqrt(r2 + za * za) - v;
+}
+
+void Utility::createEnuMatrix(double lat, double lon, double *enuMat)
+{
+    double so = sin(lon * M_PI / 180.0);
+    double co = cos(lon * M_PI / 180.0);
+    double sa = sin(lat * M_PI / 180.0);
+    double ca = cos(lat * M_PI / 180.0);
+
+    // ENU
+    enuMat[0] = -so;
+    enuMat[1] = co;
+    enuMat[2] = 0.0;
+
+    enuMat[3] = -sa * co;
+    enuMat[4] = -sa * so;
+    enuMat[5] = ca;
+
+    enuMat[6] = ca * co;
+    enuMat[7] = ca * so;
+    enuMat[8] = sa;
+}
+
+void Utility::llhToEnu(const double *iLlh, const double *llh, double *xyz)
+{
+    double ix, iy, iz;
+    llhToXyz(iLlh[0], iLlh[1], iLlh[2], &ix, &iy, &iz);
+
+    double x, y, z;
+    llhToXyz(llh[0], llh[1], llh[2], &x, &y, &z);
+
+    double enuMat[9];
+    createEnuMatrix(iLlh[0], iLlh[1], enuMat);
+
+    double dx = x - ix;
+    double dy = y - iy;
+    double dz = z - iz;
+
+    xyz[0] = enuMat[0] * dx + enuMat[1] * dy + enuMat[2] * dz;
+    xyz[1] = enuMat[3] * dx + enuMat[4] * dy + enuMat[5] * dz;
+    xyz[2] = enuMat[6] * dx + enuMat[7] * dy + enuMat[8] * dz;
+}
+
+void Utility::enuToLlh(const double *iLlh, const double *xyz, double *llh)
+{
+    double ix, iy, iz;
+    llhToXyz(iLlh[0], iLlh[1], iLlh[2], &ix, &iy, &iz);
+
+    double enuMat[9];
+    createEnuMatrix(iLlh[0], iLlh[1], enuMat);
+
+    double x = enuMat[0] * xyz[0] + enuMat[3] * xyz[1] + enuMat[6] * xyz[2] + ix;
+    double y = enuMat[1] * xyz[0] + enuMat[4] * xyz[1] + enuMat[7] * xyz[2] + iy;
+    double z = enuMat[2] * xyz[0] + enuMat[5] * xyz[1] + enuMat[8] * xyz[2] + iz;
+
+    xyzToLlh(x, y, z, &llh[0], &llh[1], &llh[2]);
+}
+
+bool Utility::configCheckCompatibility(int fwMajor, int fwMinor)
+{
+    QDirIterator it("://res/config");
+
+    while (it.hasNext()) {
+        QFileInfo fi(it.next());
+        QStringList names = fi.fileName().split("_o_");
+
+        if (fi.isDir()) {
+            for(auto name: names) {
+                auto parts = name.split(".");
+                if (parts.size() == 2) {
+                    int major = parts.at(0).toInt();
+                    int minor = parts.at(1).toInt();
+                    if (major == fwMajor && minor == fwMinor) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+bool Utility::configLoad(VescInterface *vesc, int fwMajor, int fwMinor)
+{
+    QDirIterator it("://res/config");
+
+    while (it.hasNext()) {
+        QFileInfo fi(it.next());
+        QStringList names = fi.fileName().split("_o_");
+
+        if (fi.isDir()) {
+            for(auto name: names) {
+                auto parts = name.split(".");
+                if (parts.size() == 2) {
+                    int major = parts.at(0).toInt();
+                    int minor = parts.at(1).toInt();
+                    if (major == fwMajor && minor == fwMinor) {
+                        QFileInfo fMc(it.filePath() + "/parameters_mcconf.xml");
+                        QFileInfo fApp(it.filePath() + "/parameters_appconf.xml");
+                        QFileInfo fInfo(it.filePath() + "/info.xml");
+
+                        if (fMc.exists() && fApp.exists() && fInfo.exists()) {
+                            vesc->mcConfig()->loadParamsXml(fMc.absoluteFilePath());
+                            vesc->appConfig()->loadParamsXml(fApp.absoluteFilePath());
+                            vesc->infoConfig()->loadParamsXml(fInfo.absoluteFilePath());
+                            vesc->emitConfigurationChanged();
+                            return true;
+                        } else {
+                            qWarning() << "Configurations not found in firmware directory" << it.path();
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+QPair<int, int> Utility::configLatestSupported()
+{
+    QPair<int, int> res = qMakePair(-1, -1);
+    QDirIterator it("://res/config");
+
+    while (it.hasNext()) {
+        QFileInfo fi(it.next());
+        QStringList names = fi.fileName().split("_o_");
+
+        if (fi.isDir()) {
+            for(auto name: names) {
+                auto parts = name.split(".");
+                if (parts.size() == 2) {
+                    QPair<int, int> ver = qMakePair(parts.at(0).toInt(), parts.at(1).toInt());
+                    if (ver > res) {
+                        res = ver;
+                    }
+                }
+            }
+        }
+    }
+
+    return res;
+}
+
+bool Utility::configLoadLatest(VescInterface *vesc)
+{
+    auto latestSupported = configLatestSupported();
+
+    if (latestSupported.first >= 0) {
+        configLoad(vesc, latestSupported.first, latestSupported.second);
+        return true;
+    } else {
+        return false;
+    }
+}
+
+QVector<QPair<int, int> > Utility::configSupportedFws()
+{
+    QVector<QPair<int, int>> res;
+    QDirIterator it("://res/config");
+
+    while (it.hasNext()) {
+        QFileInfo fi(it.next());
+        QStringList names = fi.fileName().split("_o_");
+
+        if (fi.isDir()) {
+            for(auto name: names) {
+                auto parts = name.split(".");
+                if (parts.size() == 2) {
+                    int major = parts.at(0).toInt();
+                    int minor = parts.at(1).toInt();
+                    res.append(qMakePair(major, minor));
+                }
+            }
+        }
+    }
+
+    return res;
+}
+
+bool Utility::configLoadCompatible(VescInterface *vesc, QString &uuidRx)
+{
+    bool res = false;
+
+    auto conn = connect(vesc->commands(), &Commands::fwVersionReceived,
+            [&res, &uuidRx, vesc](int major, int minor, QString hw, QByteArray uuid, bool isPaired) {
+        (void)hw;(void)uuid;(void)isPaired;
+
+        if (vesc->getSupportedFirmwarePairs().contains(qMakePair(major, minor))) {
+            res = true;
+        } else {
+            res = configLoad(vesc, major, minor);
+        }
+
+        QString uuidStr = uuid2Str(uuid, true);
+        uuidRx = uuidStr.toUpper();
+        uuidRx.replace(" ", "");
+
+        if (!res) {
+            vesc->emitMessageDialog("Load Config", "Could not load configuration parser.", false, false);
+        }
+    });
+
+    disconnect(vesc->commands(), SIGNAL(fwVersionReceived(int,int,QString,QByteArray,bool)),
+               vesc, SLOT(fwVersionReceived(int,int,QString,QByteArray,bool)));
+
+    vesc->commands()->getFwVersion();
+
+    if (!waitSignal(vesc->commands(), SIGNAL(fwVersionReceived(int,int,QString,QByteArray,bool)), 1500)) {
+        vesc->emitMessageDialog("Load Config", "No response when reading firmware version.", false, false);
+    }
 
     disconnect(conn);
 

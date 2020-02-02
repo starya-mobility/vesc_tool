@@ -26,7 +26,6 @@ import Vedder.vesc.commands 1.0
 import Vedder.vesc.configparams 1.0
 
 Item {
-    property int parentWidth: 10
     property real res: 0.0
     property real ind: 0.0
     property real lambda: 0.0
@@ -84,7 +83,14 @@ Item {
             return;
         }
 
-        gain = 0.001 / (lambda * lambda)
+        if (res < 1e-10) {
+            VescIf.emitMessageDialog("Calculate Error",
+                                     "R is 0. Please measure it first.",
+                                     false, false)
+            return;
+        }
+
+        gain = (0.00001 / res) / (lambda * lambda)
 
         updateDisplay()
     }
@@ -110,11 +116,13 @@ Item {
         standardButtons: Dialog.Close
         modal: true
         focus: true
-        width: parentWidth - 20
+        width: parent.width - 20
         height: column.height - 40
         closePolicy: Popup.CloseOnEscape
+
         x: 10
-        y: 10
+        y: Math.max((parent.height - height) / 2, 10)
+        parent: ApplicationWindow.overlay
 
         ScrollView {
             anchors.fill: parent
@@ -162,7 +170,7 @@ Item {
                     id: tcBox
                     Layout.fillWidth: true
                     decimals: 1
-                    realValue: 1000.0
+                    realValue: 4000.0
                     realFrom: 0.0
                     realTo: 1000000.0
                     realStepSize: 100.0
@@ -282,12 +290,13 @@ Item {
         standardButtons: Dialog.Ok
         modal: true
         focus: true
-        width: parentWidth - 20
+        width: parent.width - 20
         closePolicy: Popup.CloseOnEscape
         title: "Measure R & L"
 
         x: 10
-        y: dialog.y + dialog.height / 2 - height / 2
+        y: Math.max((parent.height - height) / 2, 10)
+        parent: ApplicationWindow.overlay
 
         Text {
             id: detectRlLabel
@@ -311,18 +320,19 @@ Item {
         standardButtons: Dialog.Ok | Dialog.Cancel
         modal: true
         focus: true
-        width: parentWidth - 20
+        width: parent.width - 20
         closePolicy: Popup.CloseOnEscape
         title: "Warning"
 
         x: 10
-        y: dialog.y + dialog.height / 2 - height / 2
+        y: Math.max((parent.height - height) / 2, 10)
+        parent: ApplicationWindow.overlay
 
         Text {
+            anchors.fill: parent
             id: detectLambdaLabel
             color: "#ffffff"
             verticalAlignment: Text.AlignVCenter
-            anchors.fill: parent
             wrapMode: Text.WordWrap
             text:
                 "<font color=\"red\">Warning: </font>" +

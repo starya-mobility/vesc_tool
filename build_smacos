@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+
+export PATH=/opt/Qt/5.12-static/bin:$PATH
+rm -rf build/macos/*
+
+# Original
+qmake -config release "CONFIG += release_macos build_original -skip qtconnectivity"
+make clean
+make -j8
+rm -rf build/macos/obj
+cd build/macos
+zip vesc_tool_original_macos.zip `ls | grep -v '\.zip$'`
+#ls | grep -v '\.zip$' | xargs rm -rf
+#ls | grep -v '\.zip$' | xargs rm -rf
+cd ../..

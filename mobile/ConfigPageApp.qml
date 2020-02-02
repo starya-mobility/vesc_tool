@@ -27,7 +27,6 @@ import Vedder.vesc.configparams 1.0
 
 Item {
     property Commands mCommands: VescIf.commands()
-    property var editorsVisible: []
     property bool isHorizontal: width > height
 
     ParamEditors {
@@ -44,7 +43,7 @@ Item {
         width: parent.width - 20
         closePolicy: Popup.CloseOnEscape
         x: 10
-        y: parent.height / 2 - height / 2
+        y: (parent.height - height) / 2
         parent: ApplicationWindow.overlay
 
         PpmMap {
@@ -93,154 +92,33 @@ Item {
     }
 
     function addSeparator(text) {
-        editorsVisible.push(editors.createSeparator(scrollCol, text))
-        editorsVisible[editorsVisible.length - 1].Layout.columnSpan = isHorizontal ? 2 : 1
+        var e = editors.createSeparator(scrollCol, text)
+        e.Layout.columnSpan = isHorizontal ? 2 : 1
     }
 
     function destroyEditors() {
-        for (var i = 0;i < editorsVisible.length;i++) {
-            editorsVisible[i].destroy();
+        for(var i = scrollCol.children.length;i > 0;i--) {
+            scrollCol.children[i - 1].destroy(1) // Only works with delay on android, seems to be a bug
         }
-        editorsVisible = []
     }
 
     function createEditorApp(param) {
-        editorsVisible.push(editors.createEditorApp(scrollCol, param))
-        editorsVisible[editorsVisible.length - 1].Layout.preferredWidth = 500
-        editorsVisible[editorsVisible.length - 1].Layout.fillsWidth = true
+        var e = editors.createEditorApp(scrollCol, param)
+        e.Layout.preferredWidth = 500
+        e.Layout.fillsWidth = true
     }
 
     function updateEditors() {
         destroyEditors()
 
-        switch (pageBox.currentText) {
-        case "General":
-            createEditorApp("app_to_use")
-            createEditorApp("controller_id")
-            createEditorApp("timeout_msec")
-            createEditorApp("timeout_brake_current")
-            createEditorApp("send_can_status")
-            createEditorApp("send_can_status_rate_hz")
-            createEditorApp("can_baud_rate")
-            createEditorApp("pairing_done")
-            createEditorApp("permanent_uart_enabled")
-            createEditorApp("uavcan_enable")
-            createEditorApp("uavcan_esc_index")
-            break;
+        var params = VescIf.appConfig().getParamsFromSubgroup(pageBox.currentText, tabBox.currentText)
 
-        case "PPM":
-            switch(tabBox.currentText) {
-            case "General":
-                createEditorApp("app_ppm_conf.ctrl_type")
-                createEditorApp("app_ppm_conf.median_filter")
-                createEditorApp("app_ppm_conf.safe_start")
-                createEditorApp("app_ppm_conf.pid_max_erpm")
-                createEditorApp("app_ppm_conf.ramp_time_pos")
-                createEditorApp("app_ppm_conf.ramp_time_neg")
-                addSeparator("Multiple VESCs over CAN-bus")
-                createEditorApp("app_ppm_conf.multi_esc")
-                createEditorApp("app_ppm_conf.tc")
-                createEditorApp("app_ppm_conf.tc_max_diff")
-                break;
-            case "Mapping":
-                createEditorApp("app_ppm_conf.pulse_start")
-                createEditorApp("app_ppm_conf.pulse_end")
-                createEditorApp("app_ppm_conf.pulse_center")
-                createEditorApp("app_ppm_conf.hyst")
-                break;
-            case "Throttle Curve":
-                createEditorApp("app_ppm_conf.throttle_exp")
-                createEditorApp("app_ppm_conf.throttle_exp_brake")
-                createEditorApp("app_ppm_conf.throttle_exp_mode")
-                break;
-            default:
-                break;
+        for (var i = 0;i < params.length;i++) {
+            if (params[i].startsWith("::sep::")) {
+                addSeparator(params[i].substr(7))
+            } else {
+                createEditorApp(params[i])
             }
-            break;
-
-        case "ADC":
-            switch(tabBox.currentText) {
-            case "General":
-                createEditorApp("app_adc_conf.ctrl_type")
-                createEditorApp("app_adc_conf.use_filter")
-                createEditorApp("app_adc_conf.safe_start")
-                createEditorApp("app_adc_conf.cc_button_inverted")
-                createEditorApp("app_adc_conf.rev_button_inverted")
-                createEditorApp("app_adc_conf.update_rate_hz")
-                createEditorApp("app_adc_conf.ramp_time_pos")
-                createEditorApp("app_adc_conf.ramp_time_neg")
-                addSeparator("Multiple VESCs over CAN-bus")
-                createEditorApp("app_adc_conf.multi_esc")
-                createEditorApp("app_adc_conf.tc")
-                createEditorApp("app_adc_conf.tc_max_diff")
-                break;
-            case "Mapping":
-                createEditorApp("app_adc_conf.hyst")
-                addSeparator("ADC 1")
-                createEditorApp("app_adc_conf.voltage_start")
-                createEditorApp("app_adc_conf.voltage_end")
-                createEditorApp("app_adc_conf.voltage_center")
-                createEditorApp("app_adc_conf.voltage_inverted")
-                addSeparator("ADC 2")
-                createEditorApp("app_adc_conf.voltage2_start")
-                createEditorApp("app_adc_conf.voltage2_end")
-                createEditorApp("app_adc_conf.voltage2_inverted")
-                break;
-            case "Throttle Curve":
-                createEditorApp("app_adc_conf.throttle_exp")
-                createEditorApp("app_adc_conf.throttle_exp_brake")
-                createEditorApp("app_adc_conf.throttle_exp_mode")
-                break;
-            default:
-                break;
-            }
-            break;
-
-        case "UART":
-            createEditorApp("app_uart_baudrate")
-            break;
-
-        case "Nunchuk":
-            switch(tabBox.currentText) {
-            case "General":
-                createEditorApp("app_chuk_conf.ctrl_type")
-                createEditorApp("app_chuk_conf.ramp_time_pos")
-                createEditorApp("app_chuk_conf.ramp_time_neg")
-                createEditorApp("app_chuk_conf.stick_erpm_per_s_in_cc")
-                createEditorApp("app_chuk_conf.hyst")
-                addSeparator("Multiple VESCs over CAN-bus")
-                createEditorApp("app_chuk_conf.multi_esc")
-                createEditorApp("app_chuk_conf.tc")
-                createEditorApp("app_chuk_conf.tc_max_diff")
-                break;
-            case "Throttle Curve":
-                createEditorApp("app_chuk_conf.throttle_exp")
-                createEditorApp("app_chuk_conf.throttle_exp_brake")
-                createEditorApp("app_chuk_conf.throttle_exp_mode")
-                break;
-            default:
-                break;
-            }
-            break;
-
-        case "NRF":
-            addSeparator("Radio")
-            createEditorApp("app_nrf_conf.power")
-            createEditorApp("app_nrf_conf.speed")
-            createEditorApp("app_nrf_conf.channel")
-            addSeparator("Integrity")
-            createEditorApp("app_nrf_conf.crc_type")
-            createEditorApp("app_nrf_conf.send_crc_ack")
-            createEditorApp("app_nrf_conf.retry_delay")
-            createEditorApp("app_nrf_conf.retries")
-            addSeparator("Address")
-            createEditorApp("app_nrf_conf.address__0")
-            createEditorApp("app_nrf_conf.address__1")
-            createEditorApp("app_nrf_conf.address__2")
-            break;
-
-        default:
-            break;
         }
     }
 
@@ -256,62 +134,17 @@ Item {
             ComboBox {
                 id: pageBox
                 Layout.fillWidth: true
-                model: [
-                    "General",
-                    "PPM",
-                    "ADC",
-                    "UART",
-                    "Nunchuk",
-                    "NRF"
-                ]
+
+                model: VescIf.appConfig().getParamGroups()
 
                 onCurrentTextChanged: {
                     var tabTextOld = tabBox.currentText
+                    var subgroups = VescIf.appConfig().getParamSubgroups(currentText)
 
-                    switch(currentText) {
-                    case "General":
-                        tabBox.model = []
-                        break;
+                    tabBox.model = subgroups
+                    tabBox.visible = subgroups.length > 1
 
-                    case "PPM":
-                        tabBox.model = [
-                                    "General",
-                                    "Mapping",
-                                    "Throttle Curve"
-                                ]
-                        break;
-
-                    case "ADC":
-                        tabBox.model = [
-                                    "General",
-                                    "Mapping",
-                                    "Throttle Curve"
-                                ]
-                        break;
-
-                    case "UART":
-                        tabBox.model = []
-                        break;
-
-                    case "Nunchuk":
-                        tabBox.model = [
-                                    "General",
-                                    "Throttle Curve"
-                                ]
-                        break;
-
-                    case "NRF":
-                        tabBox.model = []
-                        break;
-
-                    default:
-                        tabBox.model = []
-                        break;
-                    }
-
-                    tabBox.visible = tabBox.currentText.length !== 0
-
-                    if (tabTextOld == tabBox.currentText) {
+                    if (tabTextOld === tabBox.currentText) {
                         updateEditors()
                     }
                 }
@@ -399,6 +232,21 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    Connections {
+        target: VescIf
+        onConfigurationChanged: {
+            pageBox.model = VescIf.appConfig().getParamGroups()
+
+            var tabTextOld = tabBox.currentText
+            var subgroups = VescIf.appConfig().getParamSubgroups(pageBox.currentText)
+
+            tabBox.model = subgroups
+            tabBox.visible = subgroups.length > 1
+
+            updateEditors()
         }
     }
 }

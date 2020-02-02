@@ -32,7 +32,7 @@ PageConnection::PageConnection(QWidget *parent) :
     ui->setupUi(this);
     layout()->setContentsMargins(0, 0, 0, 0);
 
-    mVesc = 0;
+    mVesc = nullptr;
     mTimer = new QTimer(this);
 
     connect(mTimer, SIGNAL(timeout()),
@@ -83,8 +83,25 @@ void PageConnection::setVesc(VescInterface *vesc)
     ui->serialBaudBox->setValue(mVesc->getLastSerialBaud());
 #endif
 
+#ifdef HAS_CANBUS
+    ui->CANbusBitrateBox->setValue(mVesc->getLastCANbusBitrate());
+
+    ui->CANbusInterfaceBox->clear();
+    QList<QString> interfaces = mVesc->listCANbusInterfaces();
+
+    for(int i = 0;i < interfaces.size();i++) {
+        ui->CANbusInterfaceBox->addItem(interfaces.at(i), interfaces.at(i));
+    }
+
+    ui->CANbusInterfaceBox->setCurrentIndex(0);
+#endif
+
     connect(mVesc->commands(), SIGNAL(pingCanRx(QVector<int>,bool)),
             this, SLOT(pingCanRx(QVector<int>,bool)));
+    connect(mVesc, SIGNAL(CANbusNewNode(int)),
+            this, SLOT(CANbusNewNode(int)));
+    connect(mVesc, SIGNAL(CANbusInterfaceListUpdated()),
+            this, SLOT(CANbusInterfaceListUpdated()));
     connect(mVesc, SIGNAL(pairingListUpdated()),
             this, SLOT(pairingListUpdated()));
 
@@ -116,6 +133,28 @@ void PageConnection::timerSlot()
                 }
             }
         }
+    }
+
+    QString ipTxt = "Server IPs\n";
+    QString clientTxt = "Connected Clients\n";
+    if (mVesc->tcpServerIsRunning()) {
+        for (auto adr: Utility::getNetworkAddresses()) {
+            ipTxt += adr.toString() + "\n";
+        }
+
+        if (mVesc->tcpServerIsClientConnected()) {
+            clientTxt += mVesc->tcpServerClientIp();
+        }
+    } else {
+        ui->tcpServerPortBox->setEnabled(true);
+    }
+
+    if (ui->tcpServerAddressesEdit->toPlainText() != ipTxt) {
+        ui->tcpServerAddressesEdit->setPlainText(ipTxt);
+    }
+
+    if (ui->tcpServerClientsEdit->toPlainText() != clientTxt) {
+        ui->tcpServerClientsEdit->setPlainText(clientTxt);
     }
 }
 
@@ -173,6 +212,23 @@ void PageConnection::pingCanRx(QVector<int> devs, bool isTimeout)
     }
 }
 
+void PageConnection::CANbusNewNode(int node)
+{
+    ui->CANbusTargetIdBox->addItem(QString::number(node), QString::number(node));
+}
+
+void PageConnection::CANbusInterfaceListUpdated()
+{
+    ui->CANbusInterfaceBox->clear();
+    QList<QString> interfaces = mVesc->listCANbusInterfaces();
+
+    for(int i = 0; i<interfaces.size(); i++) {
+        ui->CANbusInterfaceBox->addItem(interfaces.at(i), interfaces.at(i));
+    }
+
+    ui->CANbusInterfaceBox->setCurrentIndex(0);
+}
+
 void PageConnection::pairingListUpdated()
 {
     ui->pairedListWidget->clear();
@@ -214,6 +270,35 @@ void PageConnection::on_serialConnectButton_clicked()
     if (mVesc) {
         mVesc->connectSerial(ui->serialPortBox->currentData().toString(),
                              ui->serialBaudBox->value());
+    }
+}
+
+void PageConnection::on_CANbusScanButton_clicked()
+{
+    if (mVesc) {
+        ui->CANbusScanButton->setEnabled(false);
+        mVesc->connectCANbus("socketcan", ui->CANbusInterfaceBox->currentData().toString(),
+                             ui->CANbusBitrateBox->value());
+
+        ui->CANbusTargetIdBox->clear();
+        mVesc->scanCANbus();
+        ui->CANbusScanButton->setEnabled(true);
+    }
+}
+
+void PageConnection::on_CANbusDisconnectButton_clicked()
+{
+    if (mVesc) {
+        mVesc->disconnectPort();
+    }
+}
+
+void PageConnection::on_CANbusConnectButton_clicked()
+{
+    if (mVesc) {
+        mVesc->setCANbusReceiverID(ui->CANbusTargetIdBox->currentData().toInt());
+        mVesc->connectCANbus("socketcan", ui->CANbusInterfaceBox->currentData().toString(),
+                             ui->CANbusBitrateBox->value());
     }
 }
 
@@ -309,7 +394,7 @@ void PageConnection::on_canFwdBox_currentIndexChanged(const QString &arg1)
 {
     (void)arg1;
     if (mVesc && ui->canFwdBox->count() > 0) {
-        mVesc->commands()->setCanSendId(ui->canFwdBox->currentData().toInt());
+        mVesc->commands()->setCanSendId(quint32(ui->canFwdBox->currentData().toInt()));
     }
 }
 
@@ -352,7 +437,7 @@ void PageConnection::on_pairConnectedButton_clicked()
                     bool res = Utility::waitSignal(ap, SIGNAL(updated()), 1500);
 
                     if (res) {
-                        mVesc->appConfig()->updateParamBool("pairing_done", true, 0);
+                        mVesc->appConfig()->updateParamBool("pairing_done", true, nullptr);
                         mVesc->commands()->setAppConf();
                     }
                 }
@@ -456,7 +541,7 @@ void PageConnection::on_unpairButton_clicked()
                         bool res = Utility::waitSignal(ap, SIGNAL(updated()), 1500);
 
                         if (res) {
-                            mVesc->appConfig()->updateParamBool("pairing_done", false, 0);
+                            mVesc->appConfig()->updateParamBool("pairing_done", false, nullptr);
                             mVesc->commands()->setAppConf();
                             mVesc->deletePairedUuid(mVesc->getConnectedUuid());
                             mVesc->storeSettings();
@@ -468,6 +553,18 @@ void PageConnection::on_unpairButton_clicked()
             mVesc->emitMessageDialog("Unpair VESC",
                                      "You are not connected to the VESC. Connect in order to unpair it.",
                                      false, false);
+        }
+    }
+}
+
+void PageConnection::on_tcpServerEnableBox_toggled(bool arg1)
+{
+    if (mVesc) {
+        if (arg1) {
+            mVesc->tcpServerStart(ui->tcpServerPortBox->value());
+            ui->tcpServerPortBox->setEnabled(false);
+        } else {
+            mVesc->tcpServerStop();
         }
     }
 }

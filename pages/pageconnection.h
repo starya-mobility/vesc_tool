@@ -33,7 +33,7 @@ class PageConnection : public QWidget
     Q_OBJECT
 
 public:
-    explicit PageConnection(QWidget *parent = 0);
+    explicit PageConnection(QWidget *parent = nullptr);
     ~PageConnection();
 
     VescInterface *vesc() const;
@@ -43,11 +43,16 @@ private slots:
     void timerSlot();
     void bleScanDone(QVariantMap devs, bool done);
     void pingCanRx(QVector<int> devs, bool isTimeout);
+    void CANbusNewNode(int node);
+    void CANbusInterfaceListUpdated();
     void pairingListUpdated();
 
     void on_serialRefreshButton_clicked();
     void on_serialDisconnectButton_clicked();
     void on_serialConnectButton_clicked();
+    void on_CANbusScanButton_clicked();
+    void on_CANbusDisconnectButton_clicked();
+    void on_CANbusConnectButton_clicked();
     void on_tcpDisconnectButton_clicked();
     void on_tcpConnectButton_clicked();
     void on_helpButton_clicked();
@@ -66,6 +71,7 @@ private slots:
     void on_clearPairedButton_clicked();
     void on_addUuidButton_clicked();
     void on_unpairButton_clicked();
+    void on_tcpServerEnableBox_toggled(bool arg1);
 
 private:
     Ui::PageConnection *ui;

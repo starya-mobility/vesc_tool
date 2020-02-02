@@ -28,7 +28,7 @@ DetectFoc::DetectFoc(QWidget *parent) :
 {
     ui->setupUi(this);
     layout()->setContentsMargins(0, 0, 0, 0);
-    mVesc = 0;
+    mVesc = nullptr;
     mLastCalcOk = false;
     mAllValuesOk = false;
     mLastOkValuesApplied = false;
@@ -325,6 +325,7 @@ void DetectFoc::on_calcKpKiButton_clicked()
 void DetectFoc::on_calcGainButton_clicked()
 {
     double lambda = ui->lambdaBox->value() / 1e3;
+    double res = ui->resistanceBox->value() / 1e3;
     mLastCalcOk = false;
 
     if (lambda < 1e-10) {
@@ -334,7 +335,7 @@ void DetectFoc::on_calcGainButton_clicked()
         return;
     }
 
-    ui->obsGainBox->setValue(0.001 / (lambda * lambda));
+    ui->obsGainBox->setValue((0.00001 / res) / (lambda * lambda));
 
     mLastOkValuesApplied = false;
     mLastCalcOk = true;
@@ -362,7 +363,7 @@ void DetectFoc::on_calcApplyLocalButton_clicked()
         double bw = 1.0 / (tc * 1e-6);
         double kp = l * bw;
         double ki = r * bw;
-        double gain = 0.001 / (lambda * lambda);
+        double gain = (0.00001 / r) / (lambda * lambda);
 
         mVesc->mcConfig()->updateParamDouble("foc_current_kp", kp);
         mVesc->mcConfig()->updateParamDouble("foc_current_ki", ki);

@@ -40,5 +40,7 @@
         <file>PairingDialog.qml</file>
         <file>SetupWizardIntro.qml</file>
         <file>Vesc3DView.qml</file>
+        <file>DirectoryPicker.qml</file>
+        <file>Settings.qml</file>
     </qresource>
 </RCC>
