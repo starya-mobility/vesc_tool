@@ -1,0 +1,8 @@
+#!/bin/bash
+
+rm -rf build/macos/*
+qmake -config release "CONFIG += release_macos build_original"
+make clean
+make -j8
+rm -rf build/macos/obj
+cd build/macos
