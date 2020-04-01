@@ -132,6 +132,7 @@ release_lin {
 
 release_macos {
     # brew install qt
+    ICON = res/vesc_tool.icns
     DESTDIR = build/macos
     OBJECTS_DIR = build/macos/obj
     MOC_DIR = build/macos/obj
